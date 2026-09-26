@@ -127,8 +127,12 @@ export function extractFacebook(html) {
 
 // ------------------------------------------------------------------ TikTok
 // Public profile HTML embeds <script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"> JSON with
-// userInfo.user.uniqueId and userInfo.stats.followerCount. We require the uniqueId to
-// match the handle so we never pick up another account's stats.
+// userInfo.user.uniqueId plus two stats blocks:
+//   statsV2.followerCount - exact count as a string, e.g. "10962"
+//   stats.followerCount   - a number TikTok may round, e.g. 11000
+// We prefer statsV2. If only `stats` exists, we still report it but flag it as
+// ROUNDED_BY_SOURCE, because we cannot tell whether TikTok rounded it.
+// We require the uniqueId to match the handle so we never pick up another account's stats.
 export function extractTikTok(html, handle) {
   const script = html.match(/<script[^>]+id=["']__UNIVERSAL_DATA_FOR_REHYDRATION__["'][^>]*>([\s\S]*?)<\/script>/i);
   if (script) {
@@ -136,14 +140,27 @@ export function extractTikTok(html, handle) {
       const data = JSON.parse(script[1]);
       const info = data?.__DEFAULT_SCOPE__?.['webapp.user-detail']?.userInfo;
       const uid = info?.user?.uniqueId;
-      const count = info?.stats?.followerCount ?? info?.statsV2?.followerCount;
-      if (uid && uid.toLowerCase() === handle.toLowerCase() && count != null && /^\d+$/.test(String(count))) {
-        return {
-          value: Number(count),
-          display: String(count),
-          precision: 'EXACT',
-          evidence: `__UNIVERSAL_DATA_FOR_REHYDRATION__ → webapp.user-detail.userInfo: uniqueId "${uid}", stats.followerCount ${count}`,
-        };
+      if (uid && uid.toLowerCase() === handle.toLowerCase()) {
+        const isCount = (v) => v != null && /^\d+$/.test(String(v));
+        const exact = info?.statsV2?.followerCount;
+        const legacy = info?.stats?.followerCount;
+        const prefix = `__UNIVERSAL_DATA_FOR_REHYDRATION__ → webapp.user-detail.userInfo: uniqueId "${uid}"`;
+        if (isCount(exact)) {
+          return {
+            value: Number(exact),
+            display: String(exact),
+            precision: 'EXACT',
+            evidence: `${prefix}, statsV2.followerCount "${exact}"${isCount(legacy) ? ` (stats.followerCount ${legacy} ignored: may be rounded)` : ''}`,
+          };
+        }
+        if (isCount(legacy)) {
+          return {
+            value: Number(legacy),
+            display: String(legacy),
+            precision: 'ROUNDED_BY_SOURCE',
+            evidence: `${prefix}, stats.followerCount ${legacy} (no statsV2 present; TikTok may round this field)`,
+          };
+        }
       }
     } catch {
       /* fall through to meta */

@@ -76,3 +76,17 @@ test('no profiles -> PROFILE_NOT_FOUND everywhere and no combined total', async 
   assert.ok(report.results.every((r) => r.status === STATUS.PROFILE_NOT_FOUND && r.followerCount === null && !r.profileFound));
   assert.match(renderText(report), /no combined total/);
 });
+
+test('TikTok with stats 11000 and statsV2 "10962" -> 10962, VERIFIED_COUNT, HIGH', async () => {
+  ROUTES['https://tiktokonly.example/robots.txt'] = [200, ''];
+  ROUTES['https://tiktokonly.example'] = [200, '<a href="https://www.tiktok.com/@acmehq">TikTok</a>'];
+  ROUTES['https://www.tiktok.com/@acmehq'] = [200, fx('tiktok-statsv2.html')];
+  const report = await researchCompany('https://tiktokonly.example', { useSearch: false });
+  const tiktok = report.results.find((r) => r.platform === 'TikTok');
+  assert.equal(tiktok.followerCount, 10962);
+  assert.equal(tiktok.status, STATUS.VERIFIED_COUNT);
+  assert.equal(tiktok.confidence, 'HIGH');
+  assert.equal(tiktok.followerCountPrecision, 'EXACT');
+  assert.equal(tiktok.sourceUrl, 'https://www.tiktok.com/@acmehq');
+  assert.match(renderText(report), /TikTok: 10,962 \[HIGH\]/);
+});

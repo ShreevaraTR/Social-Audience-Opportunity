@@ -59,9 +59,24 @@ test('Facebook: likes are NEVER treated as followers', () => {
   assert.equal(extractFacebook(fx('facebook-followers.html')).value, 11111);
 });
 
-test('TikTok: uses stats.followerCount for the matching handle only, never hearts', () => {
+test('TikTok: uses follower count for the matching handle only, never hearts', () => {
   assert.equal(extractTikTok(fx('tiktok-profile.html'), 'acmehq').value, 3579);
   assert.equal(extractTikTok(fx('tiktok-other-user.html'), 'acmehq'), null);
+});
+
+test('TikTok: exact statsV2.followerCount "10962" wins over rounded stats.followerCount 11000', () => {
+  const r = extractTikTok(fx('tiktok-statsv2.html'), 'acmehq');
+  assert.equal(r.value, 10962);
+  assert.notEqual(r.value, 11000);
+  assert.equal(r.display, '10962');
+  assert.equal(r.precision, 'EXACT');
+  assert.match(r.evidence, /statsV2\.followerCount "10962"/);
+});
+
+test('TikTok: stats.followerCount alone is reported but flagged as possibly rounded', () => {
+  const r = extractTikTok(fx('tiktok-profile.html'), 'acmehq');
+  assert.equal(r.precision, 'ROUNDED_BY_SOURCE');
+  assert.match(r.evidence, /no statsV2 present/);
 });
 
 test('X: JS-only shell yields no count (no guessing)', () => {
