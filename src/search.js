@@ -11,12 +11,12 @@ import { parseFollowerNumber } from './extractors.js';
 const ENDPOINT = 'https://api.search.brave.com/res/v1/web/search';
 
 async function braveSearch(query) {
+  // Without a local key, send no auth header; an outbound credential proxy may supply it.
   const key = process.env.BRAVE_SEARCH_API_KEY;
-  if (!key) return { skipped: 'search skipped (no BRAVE_SEARCH_API_KEY configured)' };
+  const headers = { accept: 'application/json' };
+  if (key) headers['x-subscription-token'] = key;
   try {
-    const res = await fetch(`${ENDPOINT}?q=${encodeURIComponent(query)}&count=10`, {
-      headers: { accept: 'application/json', 'x-subscription-token': key },
-    });
+    const res = await fetch(`${ENDPOINT}?q=${encodeURIComponent(query)}&count=10`, { headers });
     if (!res.ok) return { skipped: `search API returned HTTP ${res.status}` };
     const json = await res.json();
     return { results: (json.web?.results || []).map((r) => ({ url: r.url, title: r.title || '', description: r.description || '', age: r.age || r.page_age || null })) };
