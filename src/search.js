@@ -17,7 +17,12 @@ async function braveSearch(query) {
   if (key) headers['x-subscription-token'] = key;
   try {
     const res = await fetch(`${ENDPOINT}?q=${encodeURIComponent(query)}&count=10`, { headers });
-    if (!res.ok) return { skipped: `search API returned HTTP ${res.status}` };
+    if (!res.ok) {
+      // Surface only Brave's error code/detail from the body; never request headers.
+      const err = await res.json().then((j) => j?.error, () => null);
+      const why = [err?.code, err?.detail].filter((s) => typeof s === 'string').join(' - ');
+      return { skipped: `search API returned HTTP ${res.status}${why ? `: ${why}` : ''}` };
+    }
     const json = await res.json();
     return { results: (json.web?.results || []).map((r) => ({ url: r.url, title: r.title || '', description: r.description || '', age: r.age || r.page_age || null })) };
   } catch (err) {
