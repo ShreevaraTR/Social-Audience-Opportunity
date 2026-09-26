@@ -20,7 +20,10 @@ async function braveSearch(query) {
     if (!res.ok) {
       // Surface only Brave's error code/detail from the body; never request headers.
       const err = await res.json().then((j) => j?.error, () => null);
-      const why = [err?.code, err?.detail].filter((s) => typeof s === 'string').join(' - ');
+      // Validation entries: only field location + message (never `input`, which may echo a header value).
+      const fields = (Array.isArray(err?.meta?.errors) ? err.meta.errors : [])
+        .map((e) => `${Array.isArray(e?.loc) ? e.loc.join('.') : '?'}: ${typeof e?.msg === 'string' ? e.msg : '?'}`);
+      const why = [err?.code, err?.detail, fields.length ? `[${fields.join('; ')}]` : null].filter((s) => typeof s === 'string').join(' - ');
       return { skipped: `search API returned HTTP ${res.status}${why ? `: ${why}` : ''}` };
     }
     const json = await res.json();
