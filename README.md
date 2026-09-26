@@ -32,19 +32,59 @@ scraped.
    - Facebook: "N followers" only. **Likes are never used.**
    - TikTok: `userInfo.stats.followerCount` for the matching `uniqueId`
 3. **Secondary** (optional): a search-index snippet for the exact profile URL, recorded
-   as `SECONDARY_SEARCH_SNIPPET` with lower confidence.
+   as `sourceType: "SEARCH_DERIVED"` with lower confidence.
 4. **Build result** (`src/research.js` `buildResult`): the one place statuses and
-   confidence are assigned.
+   confidence are assigned for automated findings.
+5. **User fallback** (`src/audience.js`): where the profile was found but no count could
+   be obtained (`needsUserInput: true`), a caller may supply one with
+   `applyUserProvidedCount(result, input)` / `applyUserProvidedCounts(report, { linkedin: "71,000" })`.
+6. **Audience summary** (`report.audience`, `summarizeAudience`): totals by provenance
+   plus planning scenarios.
+
+## Provenance (`sourceType`)
+
+Every non-null `followerCount` carries exactly one `sourceType`:
+
+| sourceType | Meaning | status | confidence |
+|---|---|---|---|
+| `AUTO_VERIFIED` | Read directly from the public official profile page | `VERIFIED_COUNT` | `HIGH` |
+| `SEARCH_DERIVED` | Read from a search snippet for the exact profile URL | `VERIFIED_COUNT` | `MEDIUM` |
+| `USER_PROVIDED` | Entered by the user; not observed by the system | `USER_PROVIDED_COUNT` | `UNVERIFIED` |
+| `null` | No count | `PROFILE_FOUND_COUNT_UNAVAILABLE` / `PROFILE_NOT_FOUND` | `NOT_AVAILABLE` |
+
+`followerCountDisplay` keeps the value as shown or typed ("22K", "71,000");
+`followerCount` is the number used for arithmetic; `followerCountPrecision` is `EXACT`,
+`ROUNDED_BY_SOURCE` (e.g. "22K" -> 22000, not exactly 22,000) or `AS_PROVIDED_BY_USER`.
+
+User input must be a positive whole number of at most 1,000,000,000, typed as digits with
+optional comma thousands separators. Shorthand ("22K"), decimals, negatives, zero and
+text are rejected with a reason code. User input can only fill a
+`PROFILE_FOUND_COUNT_UNAVAILABLE` row (or correct an earlier user value); it never
+replaces an automated count. A batch is all-or-nothing.
+
+`report.audience`:
+
+- `publiclySourced`: `AUTO_VERIFIED` + `SEARCH_DERIVED` (`bySourceType` splits them)
+- `userProvided`: `USER_PROVIDED`
+- `totalAudienceFootprint`: all of the above, labelled "Total Social Audience". It is
+  never called "verified".
+- `needsUserInput`, `profileNotFound`: platform names
+- `planningScenarios`: 1% / 3% / 5% of the Total Social Audience, rounded half-up to
+  whole numbers and labelled "Planning scenarios — not predictions". They are not
+  estimates of subscribers.
+
+Each bucket has `total`, `platformCount`, `platforms` and `includesRoundedValues`.
 
 ## Integrity guarantees (enforced in code and tests)
 
 | Situation | status | followerCount | confidence |
 |---|---|---|---|
 | Count read on the official profile page | `VERIFIED_COUNT` | number | `HIGH` |
-| Count only in a search snippet | `VERIFIED_COUNT` | number | `MEDIUM` (`sourceType` marks it secondary) |
+| Count only in a search snippet | `VERIFIED_COUNT` | number | `MEDIUM` (`sourceType: SEARCH_DERIVED`) |
 | Either of the above, but the profile was found only via search | `VERIFIED_COUNT` | number | one level lower |
 | Profile known, count not reliably readable | `PROFILE_FOUND_COUNT_UNAVAILABLE` | `null` | `NOT_AVAILABLE` |
 | No official profile identified | `PROFILE_NOT_FOUND` | `null` | `NOT_AVAILABLE` |
+| Count entered by the user | `USER_PROVIDED_COUNT` | number | `UNVERIFIED` |
 
 - robots.txt is checked before every request, including every redirect hop. A
   disallowed page is not fetched.
@@ -54,7 +94,9 @@ scraped.
 - Abbreviated counts ("71K") are kept as displayed with
   `followerCountPrecision: "ROUNDED_BY_SOURCE"`. Missing digits are never filled in.
 - The combined total is only printed when at least 2 counts are verified. It is labelled
-  "Combined Verified Social Following" and is not a count of unique people.
+  "Combined Verified Social Following" and is not a count of unique people. It only
+  includes automated counts; user-provided counts appear separately under
+  "Total Social Audience".
 
 ## Known limitations
 

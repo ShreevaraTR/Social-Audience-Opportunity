@@ -5,14 +5,12 @@ import { politeGet } from './http.js';
 import { EXTRACTORS } from './extractors.js';
 import { PLATFORMS } from './platforms.js';
 import { searchFollowerSnippet } from './search.js';
+import { STATUS, SOURCE_TYPE, CONFIDENCE } from './model.js';
+import { summarizeAudience } from './audience.js';
 
-export const STATUS = {
-  VERIFIED_COUNT: 'VERIFIED_COUNT',
-  PROFILE_FOUND_COUNT_UNAVAILABLE: 'PROFILE_FOUND_COUNT_UNAVAILABLE',
-  PROFILE_NOT_FOUND: 'PROFILE_NOT_FOUND',
-};
+export { STATUS, SOURCE_TYPE, CONFIDENCE, PRECISION } from './model.js';
 
-export const CONFIDENCE = { HIGH: 'HIGH', MEDIUM: 'MEDIUM', LOW: 'LOW', NOT_AVAILABLE: 'NOT_AVAILABLE' };
+const AUTOMATED_SOURCE_TYPES = [SOURCE_TYPE.AUTO_VERIFIED, SOURCE_TYPE.SEARCH_DERIVED];
 
 /**
  * Build a result object. This is the single place statuses are assigned, so the
@@ -20,10 +18,13 @@ export const CONFIDENCE = { HIGH: 'HIGH', MEDIUM: 'MEDIUM', LOW: 'LOW', NOT_AVAI
  *   - no profile  -> PROFILE_NOT_FOUND, count null, NOT_AVAILABLE
  *   - no finding  -> PROFILE_FOUND_COUNT_UNAVAILABLE, count null, NOT_AVAILABLE
  *   - a count is only ever emitted together with a sourceUrl and evidence
+ *   - only automated findings (AUTO_VERIFIED / SEARCH_DERIVED) enter here; user-provided
+ *     counts go through applyUserProvidedCount() in audience.js and never become VERIFIED_COUNT
  */
 export function buildResult({ platform, profile, finding, attempts = [], notFoundReason = null }) {
   const base = {
     platform: platform.name,
+    platformKey: platform.key,
     profileFound: false,
     profileUrl: null,
     profileDiscoveredVia: null,
@@ -35,6 +36,10 @@ export function buildResult({ platform, profile, finding, attempts = [], notFoun
     sourceUrl: null,
     status: STATUS.PROFILE_NOT_FOUND,
     evidence: null,
+    // true when the profile is known but no count could be obtained automatically:
+    // the caller may then supply one via applyUserProvidedCount().
+    needsUserInput: false,
+    userProvidedAt: null,
     attempts,
     retrievedAt: new Date().toISOString(),
   };
@@ -48,10 +53,17 @@ export function buildResult({ platform, profile, finding, attempts = [], notFoun
     profileDiscoveredVia: profile.discoveredVia,
     status: STATUS.PROFILE_FOUND_COUNT_UNAVAILABLE,
   };
-  const valid = finding && Number.isInteger(finding.value) && finding.value >= 0 && finding.sourceUrl && finding.evidence;
+  const valid =
+    finding &&
+    Number.isInteger(finding.value) &&
+    finding.value >= 0 &&
+    finding.sourceUrl &&
+    finding.evidence &&
+    AUTOMATED_SOURCE_TYPES.includes(finding.sourceType);
   if (!valid) {
     return {
       ...withProfile,
+      needsUserInput: true,
       sourceUrl: profile.url,
       evidence: `Profile identified (${profile.discoveredVia}); no reliable public follower count could be retrieved. See attempts.`,
     };
@@ -60,7 +72,7 @@ export function buildResult({ platform, profile, finding, attempts = [], notFoun
   // Confidence: direct observation on the official profile = HIGH; secondary
   // (e.g. search snippet) = MEDIUM; either one on a profile whose officialness is
   // unconfirmed is capped one level lower.
-  let confidence = finding.sourceType === 'OFFICIAL_PROFILE' ? CONFIDENCE.HIGH : CONFIDENCE.MEDIUM;
+  let confidence = finding.sourceType === SOURCE_TYPE.AUTO_VERIFIED ? CONFIDENCE.HIGH : CONFIDENCE.MEDIUM;
   if (!profile.official) confidence = confidence === CONFIDENCE.HIGH ? CONFIDENCE.MEDIUM : CONFIDENCE.LOW;
 
   return {
@@ -89,7 +101,7 @@ async function researchPlatform(platform, profile, { useSearch, notFoundReason }
         platform,
         profile,
         attempts: [...attempts, { source: profile.url, outcome: `HTTP ${page.status}; follower count found` }],
-        finding: { ...hit, sourceType: 'OFFICIAL_PROFILE', sourceUrl: page.finalUrl },
+        finding: { ...hit, sourceType: SOURCE_TYPE.AUTO_VERIFIED, sourceUrl: page.finalUrl },
       });
     }
     attempts.push({ source: profile.url, outcome: `HTTP ${page.status}; page readable but no explicit follower count present` });
@@ -105,7 +117,7 @@ async function researchPlatform(platform, profile, { useSearch, notFoundReason }
         platform,
         profile,
         attempts: [...attempts, { source: 'Brave Search API', outcome: 'snippet with follower count found' }],
-        finding: { ...s.finding, sourceType: 'SECONDARY_SEARCH_SNIPPET' },
+        finding: { ...s.finding, sourceType: SOURCE_TYPE.SEARCH_DERIVED },
       });
     }
     attempts.push({ source: 'Brave Search API', outcome: s.note });
@@ -122,5 +134,11 @@ export async function researchCompany(companyUrl, { useSearch = true } = {}) {
   for (const platform of PLATFORMS) {
     results.push(await researchPlatform(platform, discovery.profiles[platform.key], { useSearch, notFoundReason }));
   }
-  return { companyUrl, generatedAt: new Date().toISOString(), discoveryNotes: discovery.notes, results };
+  return {
+    companyUrl,
+    generatedAt: new Date().toISOString(),
+    discoveryNotes: discovery.notes,
+    results,
+    audience: summarizeAudience(results),
+  };
 }
