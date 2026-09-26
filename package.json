@@ -1,0 +1,13 @@
+{
+  "name": "social-audience-opportunity",
+  "version": "0.1.0",
+  "private": true,
+  "description": "POC: discover a company's official social profiles and retrieve publicly visible, sourced follower counts without fabrication.",
+  "type": "module",
+  "bin": { "social-research": "bin/research.js" },
+  "scripts": {
+    "research": "node bin/research.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": { "node": ">=20" }
+}
