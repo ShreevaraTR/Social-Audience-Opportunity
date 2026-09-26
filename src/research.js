@@ -7,6 +7,7 @@ import { PLATFORMS } from './platforms.js';
 import { searchFollowerSnippet } from './search.js';
 import { STATUS, SOURCE_TYPE, CONFIDENCE } from './model.js';
 import { summarizeAudience } from './audience.js';
+import { extractCompanyInfo } from './company.js';
 
 export { STATUS, SOURCE_TYPE, CONFIDENCE, PRECISION } from './model.js';
 
@@ -125,6 +126,19 @@ async function researchPlatform(platform, profile, { useSearch, notFoundReason }
   return buildResult({ platform, profile, attempts });
 }
 
+// Whether the homepage could be read, plus the name/description it states about itself.
+function describeSite(siteFetch, companyUrl) {
+  const info = siteFetch.ok ? extractCompanyInfo(siteFetch.html, siteFetch.finalUrl || companyUrl) : extractCompanyInfo('', companyUrl);
+  return {
+    url: companyUrl,
+    finalUrl: siteFetch.finalUrl ?? companyUrl,
+    reachable: Boolean(siteFetch.ok),
+    httpStatus: siteFetch.status ?? null,
+    blockedReason: siteFetch.ok ? null : siteFetch.blockedReason,
+    ...info,
+  };
+}
+
 export async function researchCompany(companyUrl, { useSearch = true } = {}) {
   const discovery = await discoverProfiles(companyUrl, { useSearch });
   const notFoundReason = discovery.siteFetch.ok
@@ -138,6 +152,7 @@ export async function researchCompany(companyUrl, { useSearch = true } = {}) {
     companyUrl,
     generatedAt: new Date().toISOString(),
     discoveryNotes: discovery.notes,
+    site: describeSite(discovery.siteFetch, companyUrl),
     results,
     audience: summarizeAudience(results),
   };

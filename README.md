@@ -10,6 +10,31 @@ node bin/research.js https://www.beehiiv.com --json   # structured output
 npm test                                              # offline tests (synthetic fixtures)
 ```
 
+## Web app
+
+```bash
+npm start                      # http://127.0.0.1:3000/  (PORT / HOST env vars to change)
+BRAVE_SEARCH_API_KEY=... npm start   # enables the search fallback, server-side only
+```
+
+`bin/server.js` serves the UI (`public/`) and a JSON API (`src/server.js`) around the same
+engine. The browser never calls Brave and never receives the key.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/analyze` `{ "website": "https://www.beehiiv.com/" }` | Run research; returns `{ analysisId, report, newsletter }` |
+| `GET /api/analyses/:id` | Current view of an analysis |
+| `PUT /api/analyses/:id/user-counts/:platform` `{ "count": "71,000" }` | Add or edit a user-provided count (422 with a reason code if invalid or not eligible) |
+| `DELETE /api/analyses/:id/user-counts/:platform` | Remove a user-provided count |
+
+The server keeps each automated report plus the user's raw entries in memory (2 h TTL)
+and recomputes the view with `applyUserProvidedCounts()` on every change. The client
+never submits provenance or totals. `report.site` carries the homepage's own name and
+description; `newsletter` (`src/newsletter.js`) is built only from research facts, and
+sections that need content analysis come back as `NOT_GENERATED`.
+
+## CLI
+
 Zero dependencies. Requires Node ≥ 20. Behind an HTTP proxy, run with
 `NODE_USE_ENV_PROXY=1` (Node ≥ 22.21 / 24).
 
@@ -100,6 +125,7 @@ Each bucket has `total`, `platformCount`, `platforms` and `includesRoundedValues
 
 ## Known limitations
 
+- The web app stores analyses in memory: restarting the server discards them.
 - Major platforms commonly restrict anonymous automated access to profile pages (login
   walls, bot challenges, restrictive robots.txt). When that happens this tool reports
   `PROFILE_FOUND_COUNT_UNAVAILABLE` by design. Reliable counts at scale need official
