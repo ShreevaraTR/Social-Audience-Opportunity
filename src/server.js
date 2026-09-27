@@ -5,6 +5,7 @@
 //
 // API
 //   POST   /api/analyze                              { website } -> analysis view
+//                                                    { analysisId, report, newsletterStrategy }
 //   GET    /api/analyses/:id                         -> analysis view
 //   PUT    /api/analyses/:id/user-counts/:platform   { count }   -> analysis view (422 on invalid)
 //   DELETE /api/analyses/:id/user-counts/:platform              -> analysis view
@@ -22,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { isIP } from 'node:net';
 import { researchCompany } from './research.js';
 import { applyUserProvidedCount, applyUserProvidedCounts } from './audience.js';
-import { buildNewsletterOpportunity } from './newsletter.js';
+import { generateNewsletterStrategy, deterministicStrategyProvider } from './newsletter.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
 const MAX_BODY_BYTES = 16 * 1024;
@@ -137,12 +138,20 @@ export class AnalysisStore {
   }
 }
 
-function view(id, entry) {
+async function view(id, entry, strategyProvider, log) {
   const applied = applyUserProvidedCounts(entry.report, entry.userCounts);
   // Entries are validated before they are stored, so this cannot fail.
   if (!applied.ok) throw new Error('stored user counts no longer apply');
   const report = applied.report;
-  return { analysisId: id, report, newsletter: buildNewsletterOpportunity(report) };
+  // The strategy reflects the current audience (including user-provided counts). A failure
+  // here must not hide the research, so it degrades to null.
+  let newsletterStrategy = null;
+  try {
+    newsletterStrategy = await generateNewsletterStrategy(report, { provider: strategyProvider });
+  } catch (err) {
+    log.error?.(`newsletter strategy failed: ${err.message}`);
+  }
+  return { analysisId: id, report, newsletterStrategy };
 }
 
 function findPlatform(entry, key) {
@@ -169,7 +178,8 @@ async function serveStatic(req, res, pathname) {
  * Create the HTTP server. `research` is injectable for tests; it defaults to the
  * engine's researchCompany (which reads BRAVE_SEARCH_API_KEY from the server env).
  */
-export function createServer({ research = researchCompany, store = new AnalysisStore(), log = console } = {}) {
+export function createServer({ research = researchCompany, strategyProvider = deterministicStrategyProvider, store = new AnalysisStore(), log = console } = {}) {
+  const render = (id, entry) => view(id, entry, strategyProvider, log);
   async function handleApi(req, res, parts) {
     // POST /api/analyze
     if (parts.length === 1 && parts[0] === 'analyze') {
@@ -184,7 +194,7 @@ export function createServer({ research = researchCompany, store = new AnalysisS
         throw new ApiError(502, 'RESEARCH_FAILED', 'The research could not be completed. Please try again.');
       }
       const id = store.add(report);
-      return sendJson(res, 200, view(id, store.get(id)));
+      return sendJson(res, 200, await render(id, store.get(id)));
     }
     if (parts[0] !== 'analyses' || !parts[1]) throw new ApiError(404, 'NOT_FOUND', 'Unknown endpoint.');
     const id = parts[1];
@@ -193,7 +203,7 @@ export function createServer({ research = researchCompany, store = new AnalysisS
     // GET /api/analyses/:id
     if (parts.length === 2) {
       if (req.method !== 'GET') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Use GET.');
-      return sendJson(res, 200, view(id, entry));
+      return sendJson(res, 200, await render(id, entry));
     }
 
     // PUT|DELETE /api/analyses/:id/user-counts/:platform
@@ -205,12 +215,12 @@ export function createServer({ research = researchCompany, store = new AnalysisS
         const check = applyUserProvidedCount(platform, count);
         if (!check.ok) throw new ApiError(422, check.code, check.message, { platform: platform.platformKey });
         entry.userCounts = { ...entry.userCounts, [platform.platformKey]: typeof count === 'string' ? count.trim() : count };
-        return sendJson(res, 200, view(id, entry));
+        return sendJson(res, 200, await render(id, entry));
       }
       if (req.method === 'DELETE') {
         const { [platform.platformKey]: _removed, ...rest } = entry.userCounts;
         entry.userCounts = rest;
-        return sendJson(res, 200, view(id, entry));
+        return sendJson(res, 200, await render(id, entry));
       }
       throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Use PUT or DELETE.');
     }

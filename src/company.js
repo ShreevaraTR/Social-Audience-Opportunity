@@ -45,7 +45,49 @@ function jsonLdName(html) {
   return null;
 }
 
-/** { name, nameSource, description, descriptionSource } from a homepage's HTML. */
+function textOf(fragment) {
+  return decode(fragment.replace(/<(script|style|svg|noscript)\b[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]+>/g, ' '));
+}
+
+// Legal/cart/cookie boilerplate that says nothing about what the company does.
+const BOILERPLATE = /privacy|cookie|terms of|refund|policy|added to cart|all rights|copyright|^\d+\.\s/i;
+
+/**
+ * Headings (h1-h3) as stated on the homepage, in page order, deduplicated.
+ * Responsive sites often repeat a heading inside one element; that repetition is collapsed.
+ */
+export function extractHeadings(html, max = 30) {
+  const out = [];
+  const seen = new Set();
+  for (const m of (html || '').matchAll(/<h([1-3])\b[^>]*>([\s\S]*?)<\/h\1>/gi)) {
+    let text = textOf(m[2]);
+    text = text.match(/^(.+?)(?:\s+\1)+$/)?.[1] ?? text;
+    const key = text.toLowerCase();
+    if (text.length < 3 || text.length > 200 || BOILERPLATE.test(text) || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ level: Number(m[1]), text });
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/** Short link labels (navigation, footer, calls to action) as stated on the homepage. */
+export function extractNavLabels(html, max = 100) {
+  const out = [];
+  const seen = new Set();
+  for (const m of (html || '').matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/gi)) {
+    const text = textOf(m[1]);
+    const words = text.split(' ').length;
+    const key = text.toLowerCase();
+    if (text.length < 2 || text.length > 40 || words > 4 || /@|https?:|www\./i.test(text) || BOILERPLATE.test(text) || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/** { name, nameSource, description, descriptionSource, headings, navLabels } from a homepage's HTML. */
 export function extractCompanyInfo(html, url) {
   html = html || '';
   const host = new URL(url).hostname.replace(/^www\./, '');
@@ -77,5 +119,5 @@ export function extractCompanyInfo(html, url) {
       break;
     }
   }
-  return { name, nameSource, description, descriptionSource };
+  return { name, nameSource, description, descriptionSource, headings: extractHeadings(html), navLabels: extractNavLabels(html) };
 }

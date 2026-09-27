@@ -15,7 +15,7 @@ const state = {
   website: '',
   urlError: null,
   error: null, // { title, message, retry }
-  data: null, // { analysisId, report, newsletter }
+  data: null, // { analysisId, report, newsletterStrategy }
   drafts: {}, // platformKey -> text typed into a count input
   editing: {}, // platformKey -> true while editing a user-provided value
   busy: {}, // platformKey -> true while a request is in flight
@@ -224,7 +224,7 @@ function renderLoading() {
   } catch {
     /* keep raw */
   }
-  const stages = ['Finding company', 'Discovering official social profiles', 'Checking publicly available audience data', 'Analyzing audience opportunity'];
+  const stages = ['Finding company', 'Discovering official social profiles', 'Checking publicly available audience data', 'Analyzing audience opportunity', 'Building newsletter strategy'];
   return h(
     'section',
     { class: 'state-wrap', 'aria-busy': 'true' },
@@ -539,32 +539,69 @@ function ownedVsSocial() {
   );
 }
 
-function newsletterSection(nl) {
-  const pending = (title, section) =>
-    h(
-      'div',
-      { class: 'card nl-block pending' },
-      h('h3', {}, title, h('span', { class: 'tag', text: 'Not generated yet' })),
-      h('p', { text: section.reason }),
-      section.inputsAvailable?.length > 0 && h('p', { text: `Available input: ${section.inputsAvailable.join(', ')}.` }),
+function newsletterSection(strategy) {
+  const head = h(
+    'div',
+    { class: 'section-head' },
+    h('h2', { id: 'nl-h', text: 'Newsletter Strategy' }),
+    h('p', { text: 'Based on the company’s website, audience footprint, and publicly available information.' }),
+  );
+  if (!strategy) {
+    return h(
+      'section',
+      { class: 'section', 'aria-labelledby': 'nl-h' },
+      head,
+      h('div', { class: 'card empty-card' }, h('h3', { text: 'Strategy unavailable' }), h('p', { text: 'The newsletter strategy couldn’t be generated for this analysis. The research results above are unaffected.' })),
     );
-  const block = (title, section, body, wide) =>
-    section.status === 'NOT_GENERATED'
-      ? pending(title, section)
-      : h('div', { class: `card nl-block${wide ? ' wide' : ''}` }, h('h3', { text: title }), section.items.length ? body : h('p', { class: 'basis', text: 'Not enough research data yet.' }));
+  }
+  // "Based on" lines list the researched facts each recommendation draws on.
+  const basis = (items) => items?.length > 0 && h('p', { class: 'st-basis', text: `Based on: ${items.slice(0, 3).join(' · ')}` });
+  const label = (text) => h('div', { class: 'st-label', text });
 
-  const why = block('Why a newsletter could make sense', nl.whyNewsletter, h('ul', {}, nl.whyNewsletter.items.map((i) => h('li', {}, i.text, h('span', { class: 'basis', text: `Based on: ${i.basis}` })))), true);
-  const channelValue = (c) =>
-    c.followerCount !== null
-      ? h('span', { class: 'ch-val', text: `${isRounded(c) ? c.followerCountDisplay : fmt(c.followerCount)}${c.sourceType === 'USER_PROVIDED' ? ' (user provided)' : ''}` })
-      : h('span', { class: 'ch-val muted', text: c.note || '—' });
-  const channels = block('Potential acquisition channels', nl.acquisitionChannels, h('ul', { class: 'channel-list' }, nl.acquisitionChannels.items.map((c) => h('li', {}, h('span', { text: c.channel }), channelValue(c)))));
-
+  const why = h('div', { class: 'card st-card st-wide' }, label('Why a newsletter could make sense'), h('p', { class: 'st-body', text: strategy.whyNewsletterMakesSense }), basis(strategy.whyBasis));
+  const format = h(
+    'div',
+    { class: 'card st-card' },
+    label('Recommended format'),
+    h('h3', { class: 'st-title', text: strategy.recommendedFormat.title }),
+    h('p', { class: 'st-body', text: strategy.recommendedFormat.description }),
+    basis(strategy.recommendedFormat.basis),
+  );
+  const issue = h(
+    'div',
+    { class: 'card st-card' },
+    label('First issue concept'),
+    h('h3', { class: 'st-title', text: `“${strategy.firstIssue.title}”` }),
+    h('p', { class: 'st-body', text: strategy.firstIssue.concept }),
+    basis(strategy.firstIssue.basis),
+  );
+  const themes = h(
+    'div',
+    { class: 'st-wide' },
+    label('Content themes'),
+    h(
+      'ol',
+      { class: 'theme-grid' },
+      strategy.contentThemes.map((t, i) =>
+        h('li', { class: 'card theme-card' }, h('div', { class: 'theme-num', text: String(i + 1).padStart(2, '0') }), h('h3', { class: 'st-title', text: t.title }), h('p', { class: 'st-body', text: t.description }), basis(t.basis)),
+      ),
+    ),
+  );
+  const channels = h(
+    'div',
+    { class: 'card st-card st-wide' },
+    label('Potential acquisition channels'),
+    strategy.acquisitionChannels.length
+      ? h('ul', { class: 'channel-grid' }, strategy.acquisitionChannels.map((c) => h('li', {}, h('div', { class: 'ch-title', text: c.title }), h('p', { class: 'st-body', text: c.description }))))
+      : h('p', { class: 'st-body', text: 'Not enough research data to suggest specific channels.' }),
+  );
+  const g = strategy.generatedBy;
   return h(
     'section',
     { class: 'section', 'aria-labelledby': 'nl-h' },
-    h('div', { class: 'section-head' }, h('h2', { id: 'nl-h', text: 'Newsletter opportunity' }), h('p', { text: `Grounded in what the research found about ${nl.companyName}. Sections that need deeper content analysis are marked as not generated yet.` })),
-    h('div', { class: 'nl-grid' }, why, channels, block('Potential newsletter format', nl.format), block('Three content themes', nl.contentThemes), block('First issue concept', nl.firstIssueConcept)),
+    head,
+    h('div', { class: 'strategy-grid' }, why, format, issue, themes, channels),
+    h('p', { class: 'strategy-note', text: `${strategy.note} Generated by: ${g.label}.${strategy.dataQuality === 'LIMITED' ? ' Limited public information was available, so this strategy is more general than usual.' : ''}` }),
   );
 }
 
@@ -592,7 +629,7 @@ function transparency(report) {
 }
 
 function renderResults() {
-  const { report, newsletter } = state.data;
+  const { report, newsletterStrategy } = state.data;
   const anyProfile = report.results.some((r) => r.profileFound);
   const found = report.results.filter((r) => r.profileFound);
   const notFound = report.results.filter((r) => !r.profileFound);
@@ -621,7 +658,7 @@ function renderResults() {
     footprint,
     anyProfile && scenarios(report.audience),
     ownedVsSocial(),
-    newsletterSection(newsletter),
+    newsletterSection(newsletterStrategy),
     transparency(report),
   );
 }

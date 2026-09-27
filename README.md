@@ -30,8 +30,37 @@ engine. The browser never calls Brave and never receives the key.
 The server keeps each automated report plus the user's raw entries in memory (2 h TTL)
 and recomputes the view with `applyUserProvidedCounts()` on every change. The client
 never submits provenance or totals. `report.site` carries the homepage's own name and
-description; `newsletter` (`src/newsletter.js`) is built only from research facts, and
-sections that need content analysis come back as `NOT_GENERATED`.
+description, plus its own headings and link labels (`headings`, `navLabels`).
+
+### Newsletter strategy (`src/newsletter.js`)
+
+Every analysis view includes `newsletterStrategy`: why a newsletter makes sense, a
+recommended format, exactly 3 content themes, a first-issue concept and acquisition
+channels.
+
+```
+research report -> buildStrategyInput()  facts only: homepage name/description/headings/
+                                         link labels, discovered profiles, audience summary
+                -> provider.generate()   deterministic rule-based provider (default)
+                -> validateStrategy()    schema + no number that isn't in the research
+                -> newsletterStrategy    (API response -> UI)
+```
+
+- **Deterministic, no AI model.** The provider detects the kind of company from its own
+  website wording (creator platform, developer platform, payments, B2B software,
+  consumer brand, health & wellbeing, education, or general), picks the 3 themes best
+  supported by that wording, and fills recommendation templates with quoted website
+  phrases. Channels are only suggested when there is evidence (a profile, a "Log in" or
+  "Blog" link, an events page, ...).
+- **Grounded.** Researched facts appear only as quoted website text or audience figures;
+  each section carries `basis` (the facts it used). The validator rejects any number not
+  present in the research, so follower counts cannot be invented.
+- **Pluggable.** Pass `{ provider: { id, kind, label, async generate(input) } }` to
+  `generateNewsletterStrategy()` (or `createServer({ strategyProvider })`) to use an LLM
+  later. Invalid or fabricating output falls back to the deterministic provider;
+  results are cached per input.
+- With little public information (`dataQuality: "LIMITED"`), the strategy stays general
+  and says so.
 
 ## CLI
 

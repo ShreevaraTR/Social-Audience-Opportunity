@@ -109,8 +109,17 @@ test('POST /api/analyze returns the Beehiiv research through the real engine', a
   }
   assert.equal(json.report.audience.publiclySourced.total, 38042);
   assert.deepEqual(json.report.audience.needsUserInput, ['LinkedIn', 'X']);
-  assert.equal(json.newsletter.companyName, 'beehiiv');
-  assert.equal(json.newsletter.contentThemes.status, 'NOT_GENERATED');
+  assert.equal(json.newsletter, undefined, 'the placeholder object is replaced by newsletterStrategy');
+  const st = json.newsletterStrategy;
+  assert.equal(st.companyName, 'beehiiv');
+  assert.equal(st.generatedBy.kind, 'DETERMINISTIC');
+  assert.equal(st.archetype.id, 'creator-platform');
+  assert.equal(st.contentThemes.length, 3);
+  assert.ok(st.recommendedFormat.title && st.recommendedFormat.description);
+  assert.ok(st.firstIssue.title && st.firstIssue.concept);
+  assert.ok(st.acquisitionChannels.length > 0);
+  assert.match(st.whyNewsletterMakesSense, /38,042 followers across 3 platforms/);
+  assert.doesNotMatch(JSON.stringify(st), /NOT_GENERATED|Not generated/i);
 
   // The credential was used server-side for Brave...
   assert.ok(braveHeaders.length > 0);
@@ -158,8 +167,13 @@ test('user-provided counts stay USER_PROVIDED_COUNT and are never represented as
   assert.equal(r.x.followerCount, 12000);
   assert.ok(!json.report.audience.publiclySourced.platforms.includes('LinkedIn'));
   assert.doesNotMatch(json.report.audience.totalAudienceFootprint.label, /verified/i);
-  const channel = json.newsletter.acquisitionChannels.items.find((c) => c.platformKey === 'linkedin');
-  assert.equal(channel.sourceType, 'USER_PROVIDED');
+  // The strategy follows the current audience and keeps user-provided figures labelled.
+  const st = json.newsletterStrategy;
+  assert.match(st.whyNewsletterMakesSense, /121,042 followers across 5 platforms \(including user-provided figures\)/);
+  const social = st.acquisitionChannels.find((c) => c.title === 'Existing social audience');
+  assert.match(social.description, /LinkedIn \(71,000, user provided\)/);
+  assert.match(social.description, /TikTok \(10,963\)/);
+  assert.doesNotMatch(JSON.stringify(st), /verified/i);
 });
 
 test('invalid or ineligible user input is rejected by the server and changes nothing', async () => {

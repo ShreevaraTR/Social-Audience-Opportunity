@@ -289,20 +289,20 @@ a.pc-url:hover { color: var(--ink); }
 .compare .foot { margin-top: 16px; font-size: 13px; color: var(--ink-2); }
 
 /* ---------------------------------------------------------------- newsletter */
-.nl-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
-.nl-block { padding: 22px 24px; }
-.nl-block.wide { grid-column: 1 / -1; }
-.nl-block h3 { font-size: 15px; font-weight: 650; }
-.nl-block ul { margin: 12px 0 0; padding-left: 18px; display: grid; gap: 8px; font-size: 14px; color: var(--ink-2); }
-.nl-block .basis { display: block; font-size: 12px; color: var(--muted); }
-.nl-block.pending { background: var(--surface-2); border-style: dashed; box-shadow: none; }
-.nl-block.pending p { font-size: 13px; color: var(--muted); margin-top: 8px; }
-.nl-block .tag { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-left: 8px; }
-.channel-list { list-style: none !important; padding: 0 !important; }
-.channel-list li { display: flex; justify-content: space-between; gap: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-.channel-list li:last-child { border-bottom: none; padding-bottom: 0; }
-.channel-list .ch-val { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.channel-list .ch-val.muted { color: var(--muted); font-weight: 400; }
+.strategy-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+.st-wide { grid-column: 1 / -1; }
+.st-card { padding: 22px 24px; }
+.st-label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
+.st-title { font-size: 17px; font-weight: 650; }
+.st-body { font-size: 14px; color: var(--ink-2); margin-top: 6px; }
+.st-basis { font-size: 12px; color: var(--muted); margin-top: 10px; }
+.theme-grid { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.theme-card { padding: 20px 22px; }
+.theme-num { font-size: 13px; font-weight: 700; color: var(--honey); letter-spacing: .04em; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+.channel-grid { list-style: none; padding: 0; margin: 4px 0 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 32px; }
+.channel-grid li { padding-top: 12px; border-top: 1px solid var(--line); }
+.ch-title { font-size: 14px; font-weight: 600; }
+.strategy-note { margin-top: 14px; font-size: 13px; color: var(--muted); }
 
 /* ---------------------------------------------------------------- transparency */
 .trust { padding: 24px 28px; }
@@ -322,7 +322,7 @@ a.pc-url:hover { color: var(--ink); }
 
 /* ---------------------------------------------------------------- responsive */
 @media (max-width: 900px) {
-  .summary-grid, .compare-grid, .nl-grid { grid-template-columns: 1fr; }
+  .summary-grid, .compare-grid, .strategy-grid, .theme-grid, .channel-grid { grid-template-columns: 1fr; }
   .trust-list { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
