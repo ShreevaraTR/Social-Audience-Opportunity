@@ -14,10 +14,20 @@
 // recomputes the view from them on every change with applyUserProvidedCounts(). The
 // client never submits provenance, totals or scenarios, so it cannot turn a typed number
 // into a verified one.
+//
+// Serverless hosts (Vercel) may route consecutive requests to different instances, so
+// in-memory state alone is not enough there. Every view therefore also carries
+// `analysisToken`: that same state (automated report + raw user entries), HMAC-signed by
+// the server. PUT/DELETE accept it in the body; a valid token takes precedence over
+// memory, a tampered or expired one is rejected. It is signed, not encrypted: it holds
+// nothing the browser does not already receive.
+//
+// createApp() is the request handler shared by the local server (createServer, used by
+// bin/server.js) and the Vercel function (api/index.js).
 
 import { createServer as createHttpServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isIP } from 'node:net';
@@ -26,7 +36,8 @@ import { applyUserProvidedCount, applyUserProvidedCounts } from './audience.js';
 import { generateNewsletterStrategy, deterministicStrategyProvider } from './newsletter.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
-const MAX_BODY_BYTES = 16 * 1024;
+// Large enough for PUT/DELETE bodies that carry an analysis token (the signed report).
+const MAX_BODY_BYTES = 1024 * 1024;
 const ANALYSIS_TTL_MS = 2 * 60 * 60 * 1000;
 const MAX_ANALYSES = 200;
 
@@ -96,7 +107,8 @@ function sendJson(res, status, value) {
   send(res, status, redactSecrets(JSON.stringify(value)), { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
 }
 
-async function readJson(req) {
+async function readJson(req, { optional = false } = {}) {
+  if (optional && !req.headers['content-type']) return {};
   if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) {
     throw new ApiError(415, 'UNSUPPORTED_MEDIA_TYPE', 'Send the request body as application/json.');
   }
@@ -126,6 +138,11 @@ export class AnalysisStore {
     this.entries.set(id, { report, userCounts: {}, createdAt: this.now() });
     return id;
   }
+  set(id, entry) {
+    this.prune();
+    while (!this.entries.has(id) && this.entries.size >= this.max) this.entries.delete(this.entries.keys().next().value);
+    this.entries.set(id, entry);
+  }
   get(id) {
     this.prune();
     const entry = this.entries.get(id);
@@ -136,6 +153,47 @@ export class AnalysisStore {
     const cutoff = this.now() - this.ttlMs;
     for (const [id, e] of this.entries) if (e.createdAt < cutoff) this.entries.delete(id);
   }
+}
+
+// ------------------------------------------------------------------ signed analysis state
+
+// Per-process fallback: tokens then only verify within this process (fine locally).
+const PROCESS_SECRET = randomBytes(32);
+
+/**
+ * HMAC key for analysis tokens: ANALYSIS_TOKEN_SECRET if set; otherwise derived one-way
+ * from BRAVE_SEARCH_API_KEY, so every instance of one deployment agrees without extra
+ * configuration (the HMAC output reveals nothing about the key).
+ */
+function tokenKey() {
+  if (process.env.ANALYSIS_TOKEN_SECRET) return process.env.ANALYSIS_TOKEN_SECRET;
+  if (process.env.BRAVE_SEARCH_API_KEY) return createHmac('sha256', 'analysis-token-v1').update(process.env.BRAVE_SEARCH_API_KEY).digest();
+  return PROCESS_SECRET;
+}
+
+const sign = (payload) => createHmac('sha256', tokenKey()).update(payload).digest('base64url');
+
+export function signAnalysis(id, entry) {
+  const payload = Buffer.from(JSON.stringify({ v: 1, id, createdAt: entry.createdAt, report: entry.report, userCounts: entry.userCounts })).toString('base64url');
+  return `${payload}.${sign(payload)}`;
+}
+
+/** The entry a token carries, or null if it is malformed, tampered, for another id or expired. */
+export function verifyAnalysisToken(token, id, { ttlMs = ANALYSIS_TTL_MS, now = Date.now() } = {}) {
+  if (typeof token !== 'string') return null;
+  const [payload, sig, extra] = token.split('.');
+  if (!payload || !sig || extra !== undefined) return null;
+  const expected = Buffer.from(sign(payload));
+  const given = Buffer.from(sig);
+  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
+  let data;
+  try {
+    data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (data?.v !== 1 || data.id !== id || !(data.createdAt > now - ttlMs) || !data.report?.results || typeof data.userCounts !== 'object') return null;
+  return { report: data.report, userCounts: data.userCounts, createdAt: data.createdAt };
 }
 
 async function view(id, entry, strategyProvider, log) {
@@ -151,7 +209,7 @@ async function view(id, entry, strategyProvider, log) {
   } catch (err) {
     log.error?.(`newsletter strategy failed: ${err.message}`);
   }
-  return { analysisId: id, report, newsletterStrategy };
+  return { analysisId: id, analysisToken: signAnalysis(id, entry), report, newsletterStrategy };
 }
 
 function findPlatform(entry, key) {
@@ -175,11 +233,22 @@ async function serveStatic(req, res, pathname) {
 }
 
 /**
- * Create the HTTP server. `research` is injectable for tests; it defaults to the
+ * The request handler (req, res). `research` is injectable for tests; it defaults to the
  * engine's researchCompany (which reads BRAVE_SEARCH_API_KEY from the server env).
  */
-export function createServer({ research = researchCompany, strategyProvider = deterministicStrategyProvider, store = new AnalysisStore(), log = console } = {}) {
+export function createApp({ research = researchCompany, strategyProvider = deterministicStrategyProvider, store = new AnalysisStore(), log = console } = {}) {
   const render = (id, entry) => view(id, entry, strategyProvider, log);
+
+  // A client-held token (latest state the client saw) wins over memory, which may be
+  // stale or absent on another serverless instance.
+  function entryFor(id, token) {
+    if (token === undefined || token === null) return store.get(id);
+    const entry = verifyAnalysisToken(token, id, { ttlMs: store.ttlMs, now: store.now() });
+    if (!entry) throw new ApiError(404, 'ANALYSIS_NOT_FOUND', 'This analysis has expired or could not be verified. Run the analysis again.');
+    store.set(id, entry);
+    return entry;
+  }
+
   async function handleApi(req, res, parts) {
     // POST /api/analyze
     if (parts.length === 1 && parts[0] === 'analyze') {
@@ -198,36 +267,35 @@ export function createServer({ research = researchCompany, strategyProvider = de
     }
     if (parts[0] !== 'analyses' || !parts[1]) throw new ApiError(404, 'NOT_FOUND', 'Unknown endpoint.');
     const id = parts[1];
-    const entry = store.get(id);
 
     // GET /api/analyses/:id
     if (parts.length === 2) {
       if (req.method !== 'GET') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Use GET.');
-      return sendJson(res, 200, await render(id, entry));
+      return sendJson(res, 200, await render(id, store.get(id)));
     }
 
-    // PUT|DELETE /api/analyses/:id/user-counts/:platform
+    // PUT|DELETE /api/analyses/:id/user-counts/:platform   body: { count?, analysisToken? }
     if (parts.length === 4 && parts[2] === 'user-counts') {
+      if (req.method !== 'PUT' && req.method !== 'DELETE') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Use PUT or DELETE.');
+      const body = await readJson(req, { optional: req.method === 'DELETE' });
+      const entry = entryFor(id, body.analysisToken);
       const platform = findPlatform(entry, parts[3]);
       if (req.method === 'PUT') {
-        const { count } = await readJson(req);
+        const { count } = body;
         // Validate against the automated row, so automated counts can never be overwritten.
         const check = applyUserProvidedCount(platform, count);
         if (!check.ok) throw new ApiError(422, check.code, check.message, { platform: platform.platformKey });
         entry.userCounts = { ...entry.userCounts, [platform.platformKey]: typeof count === 'string' ? count.trim() : count };
         return sendJson(res, 200, await render(id, entry));
       }
-      if (req.method === 'DELETE') {
-        const { [platform.platformKey]: _removed, ...rest } = entry.userCounts;
-        entry.userCounts = rest;
-        return sendJson(res, 200, await render(id, entry));
-      }
-      throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Use PUT or DELETE.');
+      const { [platform.platformKey]: _removed, ...rest } = entry.userCounts;
+      entry.userCounts = rest;
+      return sendJson(res, 200, await render(id, entry));
     }
     throw new ApiError(404, 'NOT_FOUND', 'Unknown endpoint.');
   }
 
-  return createHttpServer(async (req, res) => {
+  return async (req, res) => {
     let pathname;
     try {
       pathname = new URL(req.url, 'http://localhost').pathname;
@@ -245,5 +313,10 @@ export function createServer({ research = researchCompany, strategyProvider = de
       log.error?.(`unexpected error: ${err.message}`);
       return sendJson(res, 500, { error: { code: 'INTERNAL_ERROR', message: 'Something went wrong on our side. Please try again.' } });
     }
-  });
+  };
+}
+
+/** The local HTTP server (bin/server.js / npm start). */
+export function createServer(options) {
+  return createHttpServer(createApp(options));
 }

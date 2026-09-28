@@ -15,7 +15,7 @@ const state = {
   website: '',
   urlError: null,
   error: null, // { title, message, retry }
-  data: null, // { analysisId, report, newsletterStrategy }
+  data: null, // { analysisId, analysisToken, report, newsletterStrategy }
   drafts: {}, // platformKey -> text typed into a count input
   editing: {}, // platformKey -> true while editing a user-provided value
   busy: {}, // platformKey -> true while a request is in flight
@@ -151,7 +151,9 @@ async function mutateCount(result, method) {
   state.cardErrors[key] = null;
   render();
   try {
-    const body = method === 'PUT' ? { count: state.drafts[key] ?? '' } : undefined;
+    // The signed analysis state lets any server instance continue this analysis (Vercel).
+    const { analysisToken } = state.data;
+    const body = method === 'PUT' ? { count: state.drafts[key] ?? '', analysisToken } : { analysisToken };
     state.data = await api(method, `/api/analyses/${encodeURIComponent(analysisId)}/user-counts/${encodeURIComponent(key)}`, body);
     delete state.drafts[key];
     delete state.editing[key];

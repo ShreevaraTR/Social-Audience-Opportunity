@@ -62,6 +62,29 @@ research report -> buildStrategyInput()  facts only: homepage name/description/h
 - With little public information (`dataQuality: "LIMITED"`), the strategy stays general
   and says so.
 
+### Deploying to Vercel
+
+The same request handler runs locally and on Vercel (`createApp()` in `src/server.js`):
+
+| | Local (`npm start`) | Vercel |
+|---|---|---|
+| Frontend | `bin/server.js` serves `public/` | static files from `public/` (`vercel.json` `outputDirectory`) |
+| API | same process | `api/index.js` serverless function; `vercel.json` rewrites `/api/*` to it |
+
+Setup in the Vercel project:
+
+1. **Deploy the branch that contains the web app.** Production builds from the project's
+   production branch; if that branch predates `public/`, `/` returns 404.
+2. **Environment variable** `BRAVE_SEARCH_API_KEY` (server-side only; never exposed to
+   the browser). Without it the search fallback is skipped.
+3. Optional: `ANALYSIS_TOKEN_SECRET`. Serverless instances do not share memory, so each
+   response includes a signed `analysisToken` that the browser sends back when adding or
+   removing user-provided counts. The signing key is this variable, or else derived
+   one-way from `BRAVE_SEARCH_API_KEY`.
+
+No build step or dependencies are needed. `vercel.json` also allows the function up to 60 s
+(research usually takes 5-15 s) and applies the same security headers to static files.
+
 ## CLI
 
 Zero dependencies. Requires Node ≥ 20. Behind an HTTP proxy, run with
@@ -154,7 +177,8 @@ Each bucket has `total`, `platformCount`, `platforms` and `includesRoundedValues
 
 ## Known limitations
 
-- The web app stores analyses in memory: restarting the server discards them.
+- Analyses live in server memory plus the browser's signed token, valid for 2 hours;
+  reloading the page starts a new analysis.
 - Major platforms commonly restrict anonymous automated access to profile pages (login
   walls, bot challenges, restrictive robots.txt). When that happens this tool reports
   `PROFILE_FOUND_COUNT_UNAVAILABLE` by design. Reliable counts at scale need official
